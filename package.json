@@ -1,0 +1,17 @@
+{
+  "name": "deriv-ema-indicator",
+  "version": "1.0.0",
+  "description": "Deriv EMA touch/no-touch and consecutive-candle streak alert bot with Telegram notifications",
+  "main": "indicators.js",
+  "scripts": {
+    "start": "node indicators.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "license": "UNLICENSED",
+  "private": true
+}
