@@ -22,7 +22,7 @@ let ws;
 // ─── Indicator Configuration ──────────────────────────────────────────────────
 const KAMA_PERIODS       = [8];    // Single KAMA now, used for both the touch alert and the pullback-streak alert
 const TOUCH_ALERT_KAMA   = 8;       // KAMA used to detect a "touch" and fire the touch alert
-const COOLDOWN_CANDLES   = 8;        // Closed candles to wait before re-alerting for touches
+const COOLDOWN_CANDLES   = 2;        // Closed candles to wait before re-alerting for touches
 
 // Kaufman's Adaptive Moving Average smoothing constants (standard defaults)
 const KAMA_FAST_PERIOD   = 2;        // Fastest EMA constant used inside KAMA's smoothing
