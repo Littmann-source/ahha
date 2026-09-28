@@ -42,15 +42,15 @@ const PULLBACK_EMOJIS = {
 };
 
 // ─── Supertrend configuration ─────────────────────────────────────────────────
-const SUPERTREND_ATR_PERIOD = 10;   // ATR length (Wilder smoothing)
-const SUPERTREND_FACTOR     = 3;    // ATR multiplier for the bands
+const SUPERTREND_ATR_PERIOD = 1;   // ATR length (Wilder smoothing)
+const SUPERTREND_FACTOR     = 1;    // ATR multiplier for the bands
 const SUPERTREND_EMOJIS = {
   bullish: '📈',   // flipped from bearish to bullish
   bearish: '📉'    // flipped from bullish to bearish
 };
 
 // ─── Symbols & timeframes ─────────────────────────────────────────────────────
-const SYMBOLS    = [/* 'R_10', */ 'R_25'];
+const SYMBOLS    = ['R_10', /*'R_25'*/];
 const TIMEFRAMES = ['15min'];
 
 const timeframeMap = { '15min': 900 }; // 15 mins = 900 seconds
