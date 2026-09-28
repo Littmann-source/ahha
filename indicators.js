@@ -22,7 +22,7 @@ let ws;
 // ─── Indicator Configuration ──────────────────────────────────────────────────
 const KAMA_PERIODS       = [8];    // Single KAMA now, used for both the touch alert and the pullback-streak alert
 const TOUCH_ALERT_KAMA   = 8;       // KAMA used to detect a "touch" and fire the touch alert
-const COOLDOWN_CANDLES   = 2;        // Closed candles to wait before re-alerting for touches
+const COOLDOWN_CANDLES   = 8;        // Closed candles to wait before re-alerting for touches
 
 // Kaufman's Adaptive Moving Average smoothing constants (standard defaults)
 const KAMA_FAST_PERIOD   = 2;        // Fastest EMA constant used inside KAMA's smoothing
@@ -41,8 +41,22 @@ const PULLBACK_EMOJIS = {
   greenPullback: '🟢'    // downtrend (price below KAMA8): green candles that still close at/below it
 };
 
+// ─── Channel (bands) configuration — ported from "Channel Sun Signals" (MQ5) ───
+const CHANNEL_HALF_LENGTH   = 30;          // H: mid line = triangular WMA over 2H+1 bars; deviation averaging length = 2H+1
+const CHANNEL_APPLIED_PRICE = 'weighted';  // 'open' | 'high' | 'low' | 'close' | 'median' | 'typical' | 'weighted'
+const CHANNEL_DEVIATION     = 2.0;         // multiplier applied to the deviation (band distance)
+const CHANNEL_TOUCH_ALERT   = true;        // Telegram alert when a candle CLOSES having touched the upper/lower band
+const CHANNEL_EMOJIS = {
+  upper: '🔺',   // candle high reached the upper band
+  lower: '🔻'    // candle low reached the lower band
+};
+
+// Same input sanitizing as the MQ5 OnInit(): H clamped to 1..2000, deviation <=0 -> 2.0, max 20
+const channelHalf = Math.min(Math.max(Math.trunc(CHANNEL_HALF_LENGTH) || 1, 1), 2000);
+const channelDev  = !(CHANNEL_DEVIATION > 0) ? 2.0 : Math.min(CHANNEL_DEVIATION, 20);
+
 // ─── Symbols & timeframes ─────────────────────────────────────────────────────
-const SYMBOLS    = ['R_10', /*'R_25'*/];
+const SYMBOLS    = [/* 'R_10', */ 'R_25'];
 const TIMEFRAMES = ['15min'];
 
 const timeframeMap = { '15min': 900 }; // 15 mins = 900 seconds
@@ -176,6 +190,139 @@ function getKAMA(symbol, period) {
   return kamaState[symbol][period];
 }
 
+// ─── Channel (bands) calculation ───────────────────────────────────────────────
+// Port of CalculateChannelGeneric() from Channel Sun Signals.mq5.
+//  1) mid   = centered triangular WMA of the applied price (weights H+1 at the
+//             centre, falling by 1 per bar to 1 at the edges; missing neighbours
+//             at the ends are simply left out and the sum is renormalised)
+//  2) diff  = price - mid
+//  3) wu/wd = EMA (length 2H+1) of diff^2, split by side: wu learns only from bars
+//             above the mid, wd only from bars below (the other side just decays)
+//  4) upper = mid + dev*sqrt(wu),  lower = mid - dev*sqrt(wd)   (asymmetric bands)
+// Arrays here are chronological (index 0 = oldest, n-1 = newest/forming candle),
+// the MQ5 code uses series order, so its seedIndex (total-H-1) becomes index H.
+// NOTE: like the MQ5 original, the mid line is centered, so the values of the
+// last H candles are provisional and shift as new candles arrive (repainting).
+function channelAppliedPrice(c) {
+  switch (CHANNEL_APPLIED_PRICE) {
+    case 'open':     return c.open;
+    case 'high':     return c.high;
+    case 'low':      return c.low;
+    case 'median':   return (c.high + c.low) / 2;
+    case 'typical':  return (c.high + c.low + c.close) / 3;
+    case 'weighted': return (c.high + c.low + 2 * c.close) / 4;
+    default:         return c.close;
+  }
+}
+
+function calculateChannel(candles) {
+  const n = candles.length;
+  const H = channelHalf;
+  if (n <= H) return null;
+
+  const fullLength = 2 * H + 1;
+  const P     = new Array(n);
+  const mid   = new Array(n).fill(NaN);
+  const upper = new Array(n).fill(NaN);
+  const lower = new Array(n).fill(NaN);
+  const wu    = new Array(n).fill(0);
+  const wd    = new Array(n).fill(0);
+
+  for (let t = 0; t < n; t++) P[t] = channelAppliedPrice(candles[t]);
+
+  for (let t = H; t < n; t++) {           // bars older than the seed (t < H) get no bands
+    let sum = (H + 1) * P[t];
+    let sumw = H + 1;
+    for (let j = 1, k = H; j <= H; j++, k--) {
+      if (t + j < n)  { sum += k * P[t + j]; sumw += k; }   // newer neighbour
+      if (t - j >= 0) { sum += k * P[t - j]; sumw += k; }   // older neighbour
+    }
+    mid[t] = sum / sumw;
+
+    const diff = P[t] - mid[t];
+
+    if (t === H) {                        // seed bar
+      upper[t] = mid[t];
+      lower[t] = mid[t];
+      if (diff >= 0) { wu[t] = diff * diff; wd[t] = 0; }
+      else           { wd[t] = diff * diff; wu[t] = 0; }
+      continue;
+    }
+
+    if (diff >= 0) {
+      wu[t] = (wu[t - 1] * (fullLength - 1) + diff * diff) / fullLength;
+      wd[t] =  wd[t - 1] * (fullLength - 1) / fullLength;
+    } else {
+      wd[t] = (wd[t - 1] * (fullLength - 1) + diff * diff) / fullLength;
+      wu[t] =  wu[t - 1] * (fullLength - 1) / fullLength;
+    }
+
+    upper[t] = mid[t] + channelDev * Math.sqrt(Math.max(wu[t], 0));
+    lower[t] = mid[t] - channelDev * Math.sqrt(Math.max(wd[t], 0));
+
+    // Guard against corrupt data: fall back to the plain price and reset the recursion
+    if (!Number.isFinite(mid[t]) || !Number.isFinite(upper[t]) || !Number.isFinite(lower[t])) {
+      mid[t] = upper[t] = lower[t] = P[t];
+      wu[t] = 0; wd[t] = 0;
+    }
+  }
+
+  return { mid, upper, lower };
+}
+
+// Latest channel values for a symbol/timeframe.
+//   live       -> values on the currently forming candle
+//   lastClosed -> values on the most recent closed candle
+// Returns null until there is enough history.
+function getChannel(symbol, timeframe) {
+  const closed = historicalData[symbol][timeframe];
+  const cur    = currentCandles[symbol][timeframe];
+  const candles = cur ? closed.concat(cur) : closed;
+
+  const ch = calculateChannel(candles);
+  if (!ch) return null;
+
+  const pick = t => (t >= 0 && Number.isFinite(ch.upper[t]))
+    ? { mid: ch.mid[t], upper: ch.upper[t], lower: ch.lower[t] }
+    : null;
+
+  return { live: pick(candles.length - 1), lastClosed: pick(candles.length - 2) };
+}
+
+// ─── Channel band touch detection (evaluated once, at candle close) ───────────
+// A "touch" = the closed candle's range reached the band: high >= upper, or low <= lower.
+// Called right after the candle was pushed to historicalData, so the closed candle is the
+// newest bar (last index) of the array the channel is calculated on. Its band values use
+// only the data available at close, so they can still shift slightly on later candles.
+function checkChannelTouches(symbol, timeframe, closedCandle) {
+  if (!CHANNEL_TOUCH_ALERT) return;
+
+  const hist = historicalData[symbol][timeframe];
+  const ch   = calculateChannel(hist);
+  if (!ch) return;
+
+  const t = hist.length - 1;
+  if (t <= channelHalf) return;              // seed bar: bands haven't opened up yet
+
+  const upper = ch.upper[t];
+  const lower = ch.lower[t];
+  if (!Number.isFinite(upper) || !Number.isFinite(lower)) return;
+
+  const symbolName = displayNames[symbol]    || symbol;
+  const tfName     = displayNames[timeframe] || timeframe;
+
+  const touches = [];
+  if (closedCandle.high >= upper) touches.push({ side: 'upper', label: 'Upper', level: upper, extreme: closedCandle.high, word: 'High'  });
+  if (closedCandle.low  <= lower) touches.push({ side: 'lower', label: 'Lower', level: lower, extreme: closedCandle.low,  word: 'Low'   });
+
+  touches.forEach(({ side, label, level, extreme, word }) => {
+    const message = `${CHANNEL_EMOJIS[side]} ${symbolName} ${tfName}\n` +
+                    `${label} band touched (${word} ${extreme.toFixed(4)} | Band ${level.toFixed(4)})`;
+    console.log(`\n${message}`);
+    sendTelegramNotification(message, `${symbol}:${timeframe}:channel-${side}`);
+  });
+}
+
 // ─── KAMA touch and timeout detection ─────────────────────────────────────────
 function checkKAMATouches(symbol, timeframe, closedCandle) {
   const symbolName  = displayNames[symbol] || symbol;
@@ -301,6 +448,9 @@ function updateCurrentCandle(symbol, price, timestamp) {
         // Check for KAMA(8) pullback candle streaks using the fully formed closed candle
         checkKamaPullbackStreak(symbol, timeframe, closedCandle);
 
+        // Check whether the closed candle touched the channel bands
+        checkChannelTouches(symbol, timeframe, closedCandle);
+
         KAMA_PERIODS.forEach(period => {
           advanceKAMA(symbol, period, closedClose);
         });
@@ -329,8 +479,13 @@ function recalculateIndicators(symbol, timeframe, livePrice) {
     kamaString += `KAMA${period}:${kamaVal !== null ? kamaVal.toFixed(4) : 'N/A'} `;
   });
 
+  const ch = getChannel(symbol, timeframe);
+  const channelString = ch && ch.live
+    ? `Dn:${ch.live.lower.toFixed(4)} Mid:${ch.live.mid.toFixed(4)} Up:${ch.live.upper.toFixed(4)}`
+    : 'Channel:N/A';
+
   process.stdout.write(
-    `\r[${symbol}] Price:${livePrice.toFixed(4)} ${kamaString}  `
+    `\r[${symbol}] Price:${livePrice.toFixed(4)} ${kamaString}${channelString}  `
   );
 }
 
@@ -358,8 +513,12 @@ function processCandles(symbol, timeframe, candles) {
   });
 
   const kamaLogDetails = KAMA_PERIODS.map(p => `KAMA${p}:${kamaState[symbol][p]?.toFixed(4) ?? 'N/A'}`).join(' | ');
+  const chLoaded = getChannel(symbol, timeframe);
+  const chLogDetails = chLoaded && chLoaded.live
+    ? `Channel Dn:${chLoaded.live.lower.toFixed(4)} Mid:${chLoaded.live.mid.toFixed(4)} Up:${chLoaded.live.upper.toFixed(4)}`
+    : 'Channel:N/A';
   console.log(
-    `[${symbol}/${timeframe}] Loaded ${data.length} candles | ${kamaLogDetails}`
+    `[${symbol}/${timeframe}] Loaded ${data.length} candles | ${kamaLogDetails} | ${chLogDetails}`
   );
 }
 
