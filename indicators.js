@@ -22,7 +22,7 @@ let ws;
 // ─── Indicator Configuration ──────────────────────────────────────────────────
 const EMA_PERIODS        = [10];   // Single EMA, used for both the touch alert and the pullback-streak alert
 const TOUCH_ALERT_EMA    = 10;      // EMA used to detect a "touch" and fire the touch alert
-const COOLDOWN_CANDLES   = 8;        // Closed candles to wait before re-alerting for touches
+const COOLDOWN_CANDLES   = 2;        // Closed candles to wait before re-alerting for touches
 
 // Emoji mapping to identify the EMA period
 const EMA_EMOJIS = {
