@@ -20,7 +20,7 @@ const API_URL = 'wss://api.derivws.com/trading/v1/options/ws/public';
 let ws;
 
 // ─── Indicator Configuration ──────────────────────────────────────────────────
-const EMA_PERIODS        = [10];   // Single EMA, used for both the touch alert and the pullback-streak alert
+const EMA_PERIODS        = [20];   // Single EMA, used for both the touch alert and the pullback-streak alert
 const TOUCH_ALERT_EMA    = 10;      // EMA used to detect a "touch" and fire the touch alert
 const COOLDOWN_CANDLES   = 2;        // Closed candles to wait before re-alerting for touches
 
@@ -49,12 +49,12 @@ const SUPERTREND_EMOJIS = {
 const SYMBOLS    = [ 'R_10', /*'R_25'*/];
 const TIMEFRAMES = ['30min'];
 
-const timeframeMap = { '30min': 1800 }; // 30 mins = 1800 seconds
+const timeframeMap = { '15min': 900 }; // 15 mins = 900 seconds
 
 const displayNames = {
   'R_10':    'Volatility 10 Index',
   'R_25':    'Volatility 25 Index',
-  '30min':   '30 minutes'
+  '15min':   '15 minutes'
 };
 
 const MAX_HISTORICAL_CANDLES = 5000;
