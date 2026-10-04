@@ -41,6 +41,15 @@ const PULLBACK_EMOJIS = {
   greenPullback: '🟢'    // downtrend (price below KAMA20): green candles that still close at/below it
 };
 
+// ─── EMA(34) touch-alert configuration ─────────────────────────────────────────
+// Separate from KAMA — the touch alert now fires for BOTH KAMA20 and EMA34 touches.
+const EMA_PERIODS      = [34];   // Classic EMA, used only for the touch alert
+const TOUCH_ALERT_EMA  = 34;     // EMA used to detect a "touch" and fire the touch alert
+
+const EMA_EMOJIS = {
+  34: '3️⃣4️⃣'
+};
+
 // ─── Symbols & timeframes ─────────────────────────────────────────────────────
 const SYMBOLS    = [/* 'R_10', */ 'R_25'];
 const TIMEFRAMES = ['15min'];
@@ -61,6 +70,8 @@ const currentCandles        = {};
 const kamaNotificationState = {};
 const kamaState              = {};
 const kamaCloseWindow        = {};  // rolling window of last (period+1) closes, per symbol/period
+const emaNotificationState  = {};
+const emaState              = {};
 const streakState           = {};
 
 function initState() {
@@ -70,12 +81,15 @@ function initState() {
     kamaNotificationState[sym] = {};
     kamaState[sym]              = {};
     kamaCloseWindow[sym]        = {};
+    emaNotificationState[sym]  = {};
+    emaState[sym]               = {};
     streakState[sym]           = {};
 
     TIMEFRAMES.forEach(tf => {
       historicalData[sym][tf]        = [];
       currentCandles[sym][tf]        = null;
       kamaNotificationState[sym][tf] = {};
+      emaNotificationState[sym][tf]  = {};
       streakState[sym][tf]           = { type: null, count: 0, alertSent: false };
 
       KAMA_PERIODS.forEach(period => {
@@ -84,11 +98,22 @@ function initState() {
           notifSent: false
         };
       });
+
+      EMA_PERIODS.forEach(period => {
+        emaNotificationState[sym][tf][period] = {
+          lastAlertTimestamp: null,
+          notifSent: false
+        };
+      });
     });
 
     KAMA_PERIODS.forEach(period => {
       kamaState[sym][period]       = null;
       kamaCloseWindow[sym][period] = [];
+    });
+
+    EMA_PERIODS.forEach(period => {
+      emaState[sym][period] = null;
     });
   });
 }
@@ -219,6 +244,79 @@ function checkKAMATouches(symbol, timeframe, closedCandle) {
   });
 }
 
+// ─── EMA helpers (classic EMA, used only for the touch alert) ─────────────────
+function initEMA(symbol, closedCandles, period) {
+  const data = closedCandles
+    .filter(c => isFinite(c.close) && c.close > 0)
+    .sort((a, b) => a.timestamp - b.timestamp);
+
+  if (data.length < period) { emaState[symbol][period] = null; return; }
+
+  let ema = 0;
+  for (let i = 0; i < period; i++) ema += data[i].close;
+  ema /= period;
+
+  const k = 2 / (period + 1);
+  for (let i = period; i < data.length; i++) {
+    ema = data[i].close * k + ema * (1 - k);
+  }
+  emaState[symbol][period] = ema;
+}
+
+function advanceEMA(symbol, period, closedClose) {
+  if (emaState[symbol][period] === null) return;
+  const k = 2 / (period + 1);
+  emaState[symbol][period] = closedClose * k + emaState[symbol][period] * (1 - k);
+}
+
+function getEMA(symbol, period) {
+  return emaState[symbol][period];
+}
+
+// ─── EMA touch detection ───────────────────────────────────────────────────────
+// Mirrors checkKAMATouches — fires its own, independent touch alert for EMA34.
+function checkEMATouches(symbol, timeframe, closedCandle) {
+  const symbolName  = displayNames[symbol] || symbol;
+  const granularity = timeframeMap[timeframe];
+  const currentTimestamp = closedCandle.timestamp;
+
+  EMA_PERIODS.forEach(period => {
+    const ema = getEMA(symbol, period);
+    if (ema === null) return;
+
+    // Touch condition: The EMA value lies anywhere between or exactly on the Candle's High and Low
+    const touched = closedCandle.low <= ema && closedCandle.high >= ema;
+
+    const dedupKey = `${symbol}:${timeframe}:ema${period}`;
+    const state    = emaNotificationState[symbol][timeframe][period];
+    const emaEmoji = EMA_EMOJIS[period] || period;
+
+    // Process EMA Touch — only for the designated touch-alert EMA
+    if (period === TOUCH_ALERT_EMA && touched) {
+      // Evaluate Cooldown for Touch Alert (shares the same COOLDOWN_CANDLES as KAMA)
+      const candlesPassed = state.lastAlertTimestamp === null
+        ? Infinity
+        : (currentTimestamp - state.lastAlertTimestamp) / granularity;
+
+      const candlesClear = candlesPassed >= COOLDOWN_CANDLES;
+
+      if (state.notifSent && candlesClear) {
+        state.notifSent = false;
+        console.log(`[Lock] Released ${dedupKey}`);
+      }
+
+      if (!state.notifSent) {
+        state.lastAlertTimestamp = currentTimestamp;
+        state.notifSent          = true;
+
+        const message = `${emaEmoji} ${symbolName}`;
+        console.log(`\n${message}`);
+        sendTelegramNotification(message, dedupKey);
+      }
+    }
+  });
+}
+
 // ─── Candle color + KAMA(20) pullback streak detection ─────────────────────────
 function classifyCandleColor(symbol, timeframe, closedCandle) {
   if (closedCandle.close > closedCandle.open) return 'bullish';
@@ -298,11 +396,18 @@ function updateCurrentCandle(symbol, price, timestamp) {
         // Check for KAMA touches using the fully formed closed candle
         checkKAMATouches(symbol, timeframe, closedCandle);
 
+        // Check for EMA(34) touches using the fully formed closed candle
+        checkEMATouches(symbol, timeframe, closedCandle);
+
         // Check for KAMA(20) pullback candle streaks using the fully formed closed candle
         checkKamaPullbackStreak(symbol, timeframe, closedCandle);
 
         KAMA_PERIODS.forEach(period => {
           advanceKAMA(symbol, period, closedClose);
+        });
+
+        EMA_PERIODS.forEach(period => {
+          advanceEMA(symbol, period, closedClose);
         });
         console.log(`\n[${symbol}/${timeframe}] Candle closed @ ${closedClose}`);
       }
@@ -329,8 +434,14 @@ function recalculateIndicators(symbol, timeframe, livePrice) {
     kamaString += `KAMA${period}:${kamaVal !== null ? kamaVal.toFixed(4) : 'N/A'} `;
   });
 
+  let emaString = '';
+  EMA_PERIODS.forEach(period => {
+    const emaVal = getEMA(symbol, period);
+    emaString += `EMA${period}:${emaVal !== null ? emaVal.toFixed(4) : 'N/A'} `;
+  });
+
   process.stdout.write(
-    `\r[${symbol}] Price:${livePrice.toFixed(4)} ${kamaString}  `
+    `\r[${symbol}] Price:${livePrice.toFixed(4)} ${kamaString}${emaString}  `
   );
 }
 
@@ -357,9 +468,14 @@ function processCandles(symbol, timeframe, candles) {
     initKAMA(symbol, historicalData[symbol][timeframe], period);
   });
 
+  EMA_PERIODS.forEach(period => {
+    initEMA(symbol, historicalData[symbol][timeframe], period);
+  });
+
   const kamaLogDetails = KAMA_PERIODS.map(p => `KAMA${p}:${kamaState[symbol][p]?.toFixed(4) ?? 'N/A'}`).join(' | ');
+  const emaLogDetails  = EMA_PERIODS.map(p => `EMA${p}:${emaState[symbol][p]?.toFixed(4) ?? 'N/A'}`).join(' | ');
   console.log(
-    `[${symbol}/${timeframe}] Loaded ${data.length} candles | ${kamaLogDetails}`
+    `[${symbol}/${timeframe}] Loaded ${data.length} candles | ${kamaLogDetails} | ${emaLogDetails}`
   );
 }
 
