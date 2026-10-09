@@ -20,8 +20,8 @@ const API_URL = 'wss://api.derivws.com/trading/v1/options/ws/public';
 let ws;
 
 // ─── Indicator Configuration ──────────────────────────────────────────────────
-const KAMA_PERIODS       = [20];    // Single KAMA now, used for both the touch alert and the pullback-streak alert
-const TOUCH_ALERT_KAMA   = 20;       // KAMA used to detect a "touch" and fire the touch alert
+const KAMA_PERIODS       = [8];    // Single KAMA now, used for both the touch alert and the pullback-streak alert
+const TOUCH_ALERT_KAMA   = 8;       // KAMA used to detect a "touch" and fire the touch alert
 const COOLDOWN_CANDLES   = 2;        // Closed candles to wait before re-alerting for touches
 
 // Kaufman's Adaptive Moving Average smoothing constants (standard defaults)
@@ -30,36 +30,46 @@ const KAMA_SLOW_PERIOD   = 30;       // Slowest EMA constant used inside KAMA's 
 
 // Emoji mapping to identify the KAMA period
 const KAMA_EMOJIS = {
-  20: '2️⃣0️⃣'
+  8: '8️⃣'
 };
 
 // ─── KAMA-pullback candle-streak configuration ─────────────────────────────────
-const PULLBACK_KAMA_PERIOD = 20;   // KAMA used to gauge trend side for the pullback alert
-const PULLBACK_STREAK_LEN  = 2;    // Consecutive pullback candles required to fire
+const PULLBACK_KAMA_PERIOD  = 8;       // KAMA used to gauge trend side for the pullback alert
+const PULLBACK_STREAK_LEN   = 2;       // Consecutive pullback candles required to fire
 const PULLBACK_EMOJIS = {
-  redPullback:   '🔴',   // uptrend (price above KAMA20): red candles that still close at/above it
-  greenPullback: '🟢'    // downtrend (price below KAMA20): green candles that still close at/below it
+  redPullback:   '🔴',   // uptrend (price above KAMA8): red candles that still close at/above it
+  greenPullback: '🟢'    // downtrend (price below KAMA8): green candles that still close at/below it
 };
 
-// ─── EMA(34) touch-alert configuration ─────────────────────────────────────────
-// Separate from KAMA — the touch alert now fires for BOTH KAMA20 and EMA34 touches.
-const EMA_PERIODS      = [34];   // Classic EMA, used only for the touch alert
-const TOUCH_ALERT_EMA  = 34;     // EMA used to detect a "touch" and fire the touch alert
+// ─── Consecutive same-colour candle configuration ──────────────────────────────
+// Independent of KAMA/EMA and of the pullback streak: fires whenever N closed
+// candles in a row share the same colour, anywhere on the chart.
+const CONSECUTIVE_CANDLE_LEN = 3;      // Same-colour candles in a row required to fire
+const CONSECUTIVE_EMOJIS = {
+  bullish: '🟢',
+  bearish: '🔴'
+};
+
+// ─── EMA(20) touch-alert configuration ─────────────────────────────────────────
+// Separate from KAMA — the touch alert now fires for BOTH KAMA8 and EMA20 touches.
+const EMA_PERIODS      = [20];   // Classic EMA, used only for the touch alert
+const TOUCH_ALERT_EMA  = 20;     // EMA used to detect a "touch" and fire the touch alert
 
 const EMA_EMOJIS = {
-  34: '3️⃣4️⃣'
+  20: '2️⃣0️⃣'
 };
 
 // ─── Symbols & timeframes ─────────────────────────────────────────────────────
-const SYMBOLS    = ['R_10'/*, 'R_25'*/];
+const SYMBOLS    = ['R_10', 'R_25', 'R_50'];
 const TIMEFRAMES = ['15min'];
 
-const timeframeMap = { '5min': 300 }; // 15 mins = 900 seconds
+const timeframeMap = { '15min': 900 }; // 15 mins = 900 seconds
 
 const displayNames = {
   'R_10':    'Volatility 10 Index',
   'R_25':    'Volatility 25 Index',
-  '5min':   '5 minutes'
+  'R_50':    'Volatility 50 Index',
+  '15min':  '15 minutes'
 };
 
 const MAX_HISTORICAL_CANDLES = 5000;
@@ -73,6 +83,7 @@ const kamaCloseWindow        = {};  // rolling window of last (period+1) closes,
 const emaNotificationState  = {};
 const emaState              = {};
 const streakState           = {};
+const candleRunState        = {};  // same-colour candle run tracker, per symbol/timeframe
 
 function initState() {
   SYMBOLS.forEach(sym => {
@@ -84,6 +95,7 @@ function initState() {
     emaNotificationState[sym]  = {};
     emaState[sym]               = {};
     streakState[sym]           = {};
+    candleRunState[sym]        = {};
 
     TIMEFRAMES.forEach(tf => {
       historicalData[sym][tf]        = [];
@@ -91,6 +103,7 @@ function initState() {
       kamaNotificationState[sym][tf] = {};
       emaNotificationState[sym][tf]  = {};
       streakState[sym][tf]           = { type: null, count: 0, alertSent: false };
+      candleRunState[sym][tf]        = { color: null, count: 0, alertSent: false };
 
       KAMA_PERIODS.forEach(period => {
         kamaNotificationState[sym][tf][period] = { 
@@ -274,7 +287,7 @@ function getEMA(symbol, period) {
 }
 
 // ─── EMA touch detection ───────────────────────────────────────────────────────
-// Mirrors checkKAMATouches — fires its own, independent touch alert for EMA34.
+// Mirrors checkKAMATouches — fires its own, independent touch alert for EMA20.
 function checkEMATouches(symbol, timeframe, closedCandle) {
   const symbolName  = displayNames[symbol] || symbol;
   const granularity = timeframeMap[timeframe];
@@ -317,7 +330,7 @@ function checkEMATouches(symbol, timeframe, closedCandle) {
   });
 }
 
-// ─── Candle color + KAMA(20) pullback streak detection ─────────────────────────
+// ─── Candle color + KAMA(8) pullback streak detection ──────────────────────────
 function classifyCandleColor(symbol, timeframe, closedCandle) {
   if (closedCandle.close > closedCandle.open) return 'bullish';
   if (closedCandle.close < closedCandle.open) return 'bearish';
@@ -337,10 +350,10 @@ function classifyPullbackType(symbol, timeframe, closedCandle) {
   const kama  = getKAMA(symbol, PULLBACK_KAMA_PERIOD);
   if (color === null || kama === null) return null;
 
-  // Uptrend pullback: a red candle that still closes at/above the KAMA(20)
+  // Uptrend pullback: a red candle that still closes at/above the KAMA(8)
   if (color === 'bearish' && closedCandle.close >= kama) return 'redPullback';
 
-  // Downtrend pullback (vice versa): a green candle that still closes at/below the KAMA(20)
+  // Downtrend pullback (vice versa): a green candle that still closes at/below the KAMA(8)
   if (color === 'bullish' && closedCandle.close <= kama) return 'greenPullback';
 
   return null;
@@ -372,6 +385,34 @@ function checkKamaPullbackStreak(symbol, timeframe, closedCandle) {
   }
 }
 
+// ─── Consecutive same-colour candle detection ──────────────────────────────────
+// Fires once when CONSECUTIVE_CANDLE_LEN closed candles in a row are the same
+// colour (all bullish or all bearish), regardless of where they sit vs KAMA/EMA.
+function checkConsecutiveCandles(symbol, timeframe, closedCandle) {
+  const symbolName = displayNames[symbol] || symbol;
+  const color      = classifyCandleColor(symbol, timeframe, closedCandle);
+  const state      = candleRunState[symbol][timeframe];
+
+  if (color && color === state.color) {
+    state.count += 1;
+  } else {
+    // Run broke (colour changed, or colourless candle) — start over and unlock the alert
+    state.color     = color;
+    state.count     = color ? 1 : 0;
+    state.alertSent = false;
+  }
+
+  if (state.count === CONSECUTIVE_CANDLE_LEN && !state.alertSent) {
+    state.alertSent = true;
+
+    const dedupKey = `${symbol}:${timeframe}:run${CONSECUTIVE_CANDLE_LEN}`;
+    const emoji    = CONSECUTIVE_EMOJIS[color].repeat(CONSECUTIVE_CANDLE_LEN);
+    const message  = `${emoji} ${symbolName}`;
+    console.log(`\n${message}`);
+    sendTelegramNotification(message, dedupKey);
+  }
+}
+
 // ─── Candle management ───────────────────────────────────────────────────────
 function getCandleTimeframe(timestamp, granularity) {
   return Math.floor(timestamp / granularity) * granularity;
@@ -396,11 +437,14 @@ function updateCurrentCandle(symbol, price, timestamp) {
         // Check for KAMA touches using the fully formed closed candle
         checkKAMATouches(symbol, timeframe, closedCandle);
 
-        // Check for EMA(34) touches using the fully formed closed candle
+        // Check for EMA(20) touches using the fully formed closed candle
         checkEMATouches(symbol, timeframe, closedCandle);
 
-        // Check for KAMA(20) pullback candle streaks using the fully formed closed candle
+        // Check for KAMA(8) pullback candle streaks using the fully formed closed candle
         checkKamaPullbackStreak(symbol, timeframe, closedCandle);
+
+        // Check for 3 consecutive same-colour candles using the fully formed closed candle
+        checkConsecutiveCandles(symbol, timeframe, closedCandle);
 
         KAMA_PERIODS.forEach(period => {
           advanceKAMA(symbol, period, closedClose);
