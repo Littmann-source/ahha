@@ -60,7 +60,7 @@ const EMA_EMOJIS = {
 };
 
 // ─── Symbols & timeframes ─────────────────────────────────────────────────────
-const SYMBOLS    = ['R_10', 'R_25', 'R_50'];
+const SYMBOLS    = ['R_10', 'R_25', '1hz10v'];
 const TIMEFRAMES = ['15min'];
 
 const timeframeMap = { '15min': 900 }; // 15 mins = 900 seconds
