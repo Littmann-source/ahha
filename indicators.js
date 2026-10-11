@@ -50,26 +50,25 @@ const CONSECUTIVE_EMOJIS = {
   bearish: '🔴'
 };
 
-// ─── EMA(20) touch-alert configuration ─────────────────────────────────────────
-// Separate from KAMA — the touch alert now fires for BOTH KAMA8 and EMA20 touches.
-const EMA_PERIODS      = [20];   // Classic EMA, used only for the touch alert
-const TOUCH_ALERT_EMA  = 20;     // EMA used to detect a "touch" and fire the touch alert
+// ─── EMA(50) touch-alert configuration ─────────────────────────────────────────
+// Separate from KAMA — the touch alert now fires for BOTH KAMA8 and EMA50 touches.
+const EMA_PERIODS      = [50];   // Classic EMA, used only for the touch alert
+const TOUCH_ALERT_EMA  = 50;     // EMA used to detect a "touch" and fire the touch alert
 
 const EMA_EMOJIS = {
-  20: '2️⃣0️⃣'
+  50: '5️⃣0️⃣'
 };
 
 // ─── Symbols & timeframes ─────────────────────────────────────────────────────
-const SYMBOLS    = ['R_10', 'R_25', '1hz10v'];
-const TIMEFRAMES = ['15min'];
+const SYMBOLS    = ['R_10', 'R_25'];
+const TIMEFRAMES = ['30min'];
 
-const timeframeMap = { '15min': 900 }; // 15 mins = 900 seconds
+const timeframeMap = { '30min': 1800 }; // 30 mins = 1800 seconds
 
 const displayNames = {
   'R_10':    'Volatility 10 Index',
   'R_25':    'Volatility 25 Index',
-  'R_50':    'Volatility 50 Index',
-  '15min':  '15 minutes'
+  '30min':  '30 minutes'
 };
 
 const MAX_HISTORICAL_CANDLES = 5000;
@@ -287,7 +286,7 @@ function getEMA(symbol, period) {
 }
 
 // ─── EMA touch detection ───────────────────────────────────────────────────────
-// Mirrors checkKAMATouches — fires its own, independent touch alert for EMA20.
+// Mirrors checkKAMATouches — fires its own, independent touch alert for EMA50.
 function checkEMATouches(symbol, timeframe, closedCandle) {
   const symbolName  = displayNames[symbol] || symbol;
   const granularity = timeframeMap[timeframe];
@@ -437,7 +436,7 @@ function updateCurrentCandle(symbol, price, timestamp) {
         // Check for KAMA touches using the fully formed closed candle
         checkKAMATouches(symbol, timeframe, closedCandle);
 
-        // Check for EMA(20) touches using the fully formed closed candle
+        // Check for EMA(50) touches using the fully formed closed candle
         checkEMATouches(symbol, timeframe, closedCandle);
 
         // Check for KAMA(8) pullback candle streaks using the fully formed closed candle
