@@ -330,18 +330,14 @@ function checkEMATouches(symbol, timeframe, closedCandle) {
 }
 
 // ─── Candle color + KAMA(8) pullback streak detection ──────────────────────────
+// Candle colour is decided purely by open vs close:
+//   close > open  -> bullish
+//   close < open  -> bearish
+//   close === open -> no colour (doji); this resets any running streak
 function classifyCandleColor(symbol, timeframe, closedCandle) {
   if (closedCandle.close > closedCandle.open) return 'bullish';
   if (closedCandle.close < closedCandle.open) return 'bearish';
-
-  // Doji (close === open): borrow a color by comparing to the previous candle's close
-  const hist = historicalData[symbol][timeframe];
-  const prevCandle = hist.length >= 2 ? hist[hist.length - 2] : null;
-  if (!prevCandle) return null;
-
-  if (closedCandle.close > prevCandle.close) return 'bullish';
-  if (closedCandle.close < prevCandle.close) return 'bearish';
-  return null; // tied with the previous close too — no color
+  return null;
 }
 
 function classifyPullbackType(symbol, timeframe, closedCandle) {
