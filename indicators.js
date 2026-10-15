@@ -60,15 +60,15 @@ const EMA_EMOJIS = {
 };
 
 // ─── Symbols & timeframes ─────────────────────────────────────────────────────
-const SYMBOLS    = ['R_10' , 'R_25' ];
+const SYMBOLS    = ['R_10' /*, 'R_25' */];
 const TIMEFRAMES = ['15min'];
 
-const timeframeMap = { '15min': 300 }; // 5 mins = 300 seconds
+const timeframeMap = { '15min': 900 }; // 15 mins = 900 seconds
 
 const displayNames = {
   'R_10':    'Volatility 10 Index',
-  'R_25':    'Volatility 25 Index',
-  '15min':   '15 minutes'
+  // 'R_25':    'Volatility 25 Index',
+  '15min':  '15 minutes'
 };
 
 const MAX_HISTORICAL_CANDLES = 5000;
@@ -429,6 +429,17 @@ function updateCurrentCandle(symbol, price, timestamp) {
 
         const closedClose = closedCandle.close;
 
+        // Advance KAMA/EMA with the closed candle's close FIRST, so every check below
+        // compares against the same value a chart shows on that candle. Previously the
+        // checks ran against the PREVIOUS candle's KAMA, which caused wrong alerts.
+        KAMA_PERIODS.forEach(period => {
+          advanceKAMA(symbol, period, closedClose);
+        });
+
+        EMA_PERIODS.forEach(period => {
+          advanceEMA(symbol, period, closedClose);
+        });
+
         // Check for KAMA touches using the fully formed closed candle
         checkKAMATouches(symbol, timeframe, closedCandle);
 
@@ -438,16 +449,9 @@ function updateCurrentCandle(symbol, price, timestamp) {
         // Check for KAMA(8) pullback candle streaks using the fully formed closed candle
         checkKamaPullbackStreak(symbol, timeframe, closedCandle);
 
-        // Check for 3 consecutive same-colour candles using the fully formed closed candle
+        // Check for consecutive same-colour candles using the fully formed closed candle
         checkConsecutiveCandles(symbol, timeframe, closedCandle);
 
-        KAMA_PERIODS.forEach(period => {
-          advanceKAMA(symbol, period, closedClose);
-        });
-
-        EMA_PERIODS.forEach(period => {
-          advanceEMA(symbol, period, closedClose);
-        });
         console.log(`\n[${symbol}/${timeframe}] Candle closed @ ${closedClose}`);
       }
 
