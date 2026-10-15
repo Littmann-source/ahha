@@ -61,14 +61,14 @@ const EMA_EMOJIS = {
 
 // ─── Symbols & timeframes ─────────────────────────────────────────────────────
 const SYMBOLS    = ['R_10' /*, 'R_25' */];
-const TIMEFRAMES = ['5min'];
+const TIMEFRAMES = ['15min'];
 
-const timeframeMap = { '5min': 300 }; // 5 mins = 300 seconds
+const timeframeMap = { '15min': 300 }; // 5 mins = 300 seconds
 
 const displayNames = {
   'R_10':    'Volatility 10 Index',
   // 'R_25':    'Volatility 25 Index',
-  '5min':   '5 minutes'
+  '15min':   '15 minutes'
 };
 
 const MAX_HISTORICAL_CANDLES = 5000;
