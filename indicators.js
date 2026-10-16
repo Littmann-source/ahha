@@ -41,6 +41,15 @@ const PULLBACK_EMOJIS = {
   greenPullback: '🟢'    // downtrend (price below KAMA8): green candles that still close at/below it
 };
 
+// ─── KAMA deviation alert configuration ────────────────────────────────────────
+// Fires when the LIVE price is more than DEVIATION_ALERT_PCT % away from KAMA.
+const DEVIATION_KAMA_PERIOD = 8;      // KAMA used as the reference
+const DEVIATION_ALERT_PCT   = 20;     // Distance from KAMA (in %) that triggers the alert
+const DEVIATION_EMOJIS = {
+  above: '🚀',
+  below: '🔻'
+};
+
 // ─── Consecutive same-colour candle configuration ──────────────────────────────
 // Independent of KAMA/EMA and of the pullback streak: fires whenever N closed
 // candles in a row share the same colour, anywhere on the chart.
@@ -83,9 +92,11 @@ const emaNotificationState  = {};
 const emaState              = {};
 const streakState           = {};
 const candleRunState        = {};  // same-colour candle run tracker, per symbol/timeframe
+const deviationState        = {};  // KAMA deviation alert lock, per symbol
 
 function initState() {
   SYMBOLS.forEach(sym => {
+    deviationState[sym]        = { alertedSide: null };
     historicalData[sym]        = {};
     currentCandles[sym]        = {};
     kamaNotificationState[sym] = {};
@@ -254,6 +265,35 @@ function checkKAMATouches(symbol, timeframe, closedCandle) {
       }
     }
   });
+}
+
+// ─── KAMA deviation detection (live price) ─────────────────────────────────────
+// Fires once when price moves more than DEVIATION_ALERT_PCT % away from KAMA.
+// The alert re-arms only after price comes back within the threshold, so you
+// don't get spammed on every tick while price stays stretched.
+function checkKamaDeviation(symbol, price) {
+  const kama = getKAMA(symbol, DEVIATION_KAMA_PERIOD);
+  if (kama === null || kama <= 0) return;
+
+  const symbolName   = displayNames[symbol] || symbol;
+  const deviationPct = ((price - kama) / kama) * 100;
+  const state        = deviationState[symbol];
+
+  if (Math.abs(deviationPct) <= DEVIATION_ALERT_PCT) {
+    state.alertedSide = null; // back inside the band — re-arm
+    return;
+  }
+
+  const side = deviationPct > 0 ? 'above' : 'below';
+  if (state.alertedSide === side) return; // already alerted for this move
+
+  state.alertedSide = side;
+
+  const kamaEmoji = KAMA_EMOJIS[DEVIATION_KAMA_PERIOD] || DEVIATION_KAMA_PERIOD;
+  const message   = `${DEVIATION_EMOJIS[side]} ${symbolName} is ${Math.abs(deviationPct).toFixed(1)}% ${side} ${kamaEmoji} KAMA\n` +
+                    `Price: ${price.toFixed(4)} | KAMA: ${kama.toFixed(4)}`;
+  console.log(`\n${message}`);
+  sendTelegramNotification(message, `${symbol}:deviation:${side}`);
 }
 
 // ─── EMA helpers (classic EMA, used only for the touch alert) ─────────────────
@@ -562,6 +602,7 @@ function handleMessage(raw) {
     lastTickEpoch[symbol] = epoch;
 
     updateCurrentCandle(symbol, price, epoch);
+    checkKamaDeviation(symbol, price);
     Object.keys(timeframeMap).forEach(tf => recalculateIndicators(symbol, tf, price));
   }
 }
