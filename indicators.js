@@ -20,8 +20,8 @@ const API_URL = 'wss://api.derivws.com/trading/v1/options/ws/public';
 let ws;
 
 // ─── Indicator Configuration ──────────────────────────────────────────────────
-const KAMA_PERIODS       = [8];    // Single KAMA now, used for both the touch alert and the pullback-streak alert
-const TOUCH_ALERT_KAMA   = 8;       // KAMA used to detect a "touch" and fire the touch alert
+const KAMA_PERIODS       = [20];    // Single KAMA now, used for both the touch alert and the pullback-streak alert
+const TOUCH_ALERT_KAMA   = 20;       // KAMA used to detect a "touch" and fire the touch alert
 const COOLDOWN_CANDLES   = 2;        // Closed candles to wait before re-alerting for touches
 
 // Kaufman's Adaptive Moving Average smoothing constants (standard defaults)
@@ -34,7 +34,7 @@ const KAMA_EMOJIS = {
 };
 
 // ─── KAMA-pullback candle-streak configuration ─────────────────────────────────
-const PULLBACK_KAMA_PERIOD  = 8;       // KAMA used to gauge trend side for the pullback alert
+const PULLBACK_KAMA_PERIOD  = 20;       // KAMA used to gauge trend side for the pullback alert
 const PULLBACK_STREAK_LEN   = 2;       // Consecutive pullback candles required to fire
 const PULLBACK_EMOJIS = {
   redPullback:   '🔴',   // uptrend (price above KAMA8): red candles that still close at/above it
@@ -43,7 +43,7 @@ const PULLBACK_EMOJIS = {
 
 // ─── KAMA deviation alert configuration ────────────────────────────────────────
 // Fires when the LIVE price is more than DEVIATION_ALERT_PCT % away from KAMA.
-const DEVIATION_KAMA_PERIOD = 8;      // KAMA used as the reference
+const DEVIATION_KAMA_PERIOD = 20;      // KAMA used as the reference
 const DEVIATION_ALERT_PCT   = 20;     // Distance from KAMA (in %) that triggers the alert
 const DEVIATION_EMOJIS = {
   above: '🚀',
@@ -69,14 +69,14 @@ const EMA_EMOJIS = {
 };
 
 // ─── Symbols & timeframes ─────────────────────────────────────────────────────
-const SYMBOLS    = ['R_10' /*, 'R_25' */];
+const SYMBOLS    = ['R_10' , 'R_25'];
 const TIMEFRAMES = ['15min'];
 
 const timeframeMap = { '15min': 900 }; // 15 mins = 900 seconds
 
 const displayNames = {
   'R_10':    'Volatility 10 Index',
-  // 'R_25':    'Volatility 25 Index',
+  'R_25':    'Volatility 25 Index',
   '15min':  '15 minutes'
 };
 
