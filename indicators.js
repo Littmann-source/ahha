@@ -20,8 +20,8 @@ const API_URL = 'wss://api.derivws.com/trading/v1/options/ws/public';
 let ws;
 
 // ─── Indicator Configuration ──────────────────────────────────────────────────
-const KAMA_PERIODS       = [20];    // Single KAMA now, used for both the touch alert and the pullback-streak alert
-const TOUCH_ALERT_KAMA   = 20;       // KAMA used to detect a "touch" and fire the touch alert
+const KAMA_PERIODS       = [8, 20];    // Single KAMA now, used for both the touch alert and the pullback-streak alert
+const TOUCH_ALERT_KAMA   = 8;       // KAMA used to detect a "touch" and fire the touch alert
 const COOLDOWN_CANDLES   = 2;        // Closed candles to wait before re-alerting for touches
 
 // Kaufman's Adaptive Moving Average smoothing constants (standard defaults)
@@ -35,7 +35,7 @@ const KAMA_EMOJIS = {
 };
 
 // ─── KAMA-pullback candle-streak configuration ─────────────────────────────────
-const PULLBACK_KAMA_PERIOD  = 20;       // KAMA used to gauge trend side for the pullback alert
+const PULLBACK_KAMA_PERIOD  = 8;       // KAMA used to gauge trend side for the pullback alert
 const PULLBACK_STREAK_LEN   = 2;       // Consecutive pullback candles required to fire
 const PULLBACK_EMOJIS = {
   redPullback:   '🔴',   // uptrend (price above KAMA8): red candles that still close at/above it
@@ -93,11 +93,11 @@ const emaNotificationState  = {};
 const emaState              = {};
 const streakState           = {};
 const candleRunState        = {};  // same-colour candle run tracker, per symbol/timeframe
-const deviationState        = {};  // KAMA deviation alert lock, per symbol
+const deviationState        = {};  // KAMA deviation alert lock (candle timestamp), per symbol
 
 function initState() {
   SYMBOLS.forEach(sym => {
-    deviationState[sym]        = { alertedSide: null };
+    deviationState[sym]        = { alertedCandle: null };
     historicalData[sym]        = {};
     currentCandles[sym]        = {};
     kamaNotificationState[sym] = {};
@@ -269,32 +269,33 @@ function checkKAMATouches(symbol, timeframe, closedCandle) {
 }
 
 // ─── KAMA deviation detection (live price) ─────────────────────────────────────
-// Fires once when price moves at least DEVIATION_ALERT_PCT % away from KAMA.
-// The alert re-arms only after price comes back within the threshold, so you
-// don't get spammed on every tick while price stays stretched.
+// Fires live (intra-candle, never waiting for the close) the first time price is
+// at least DEVIATION_ALERT_PCT % away from KAMA. Max ONE alert per candle: the
+// lock is tied to the candle's timestamp, so the next candle starts fresh and
+// can alert again as soon as price hits the threshold in that candle.
 function checkKamaDeviation(symbol, price) {
+  const timeframe = Object.keys(timeframeMap)[0];
+  const candle    = currentCandles[symbol] && currentCandles[symbol][timeframe];
+  if (!candle) return;
+
+  const state = deviationState[symbol];
+  if (state.alertedCandle === candle.timestamp) return; // already alerted in this candle
+
   const kama = getKAMA(symbol, DEVIATION_KAMA_PERIOD);
   if (kama === null || kama <= 0) return;
 
-  const symbolName   = displayNames[symbol] || symbol;
   const deviationPct = ((price - kama) / kama) * 100;
-  const state        = deviationState[symbol];
+  if (Math.abs(deviationPct) < DEVIATION_ALERT_PCT) return;
 
-  if (Math.abs(deviationPct) < DEVIATION_ALERT_PCT) {
-    state.alertedSide = null; // back inside the band — re-arm
-    return;
-  }
+  state.alertedCandle = candle.timestamp; // lock until the next candle
 
-  const side = deviationPct > 0 ? 'above' : 'below';
-  if (state.alertedSide === side) return; // already alerted for this move
-
-  state.alertedSide = side;
-
-  const kamaEmoji = KAMA_EMOJIS[DEVIATION_KAMA_PERIOD] || DEVIATION_KAMA_PERIOD;
-  const message   = `${DEVIATION_EMOJIS[side]} ${symbolName} is ${Math.abs(deviationPct).toFixed(2)}% ${side} ${kamaEmoji} KAMA\n` +
-                    `Price: ${price.toFixed(4)} | KAMA: ${kama.toFixed(4)}`;
+  const side        = deviationPct > 0 ? 'above' : 'below';
+  const symbolName  = displayNames[symbol] || symbol;
+  const kamaEmoji   = KAMA_EMOJIS[DEVIATION_KAMA_PERIOD] || DEVIATION_KAMA_PERIOD;
+  const message     = `${DEVIATION_EMOJIS[side]} ${symbolName} is ${Math.abs(deviationPct).toFixed(2)}% ${side} ${kamaEmoji} KAMA\n` +
+                      `Price: ${price.toFixed(4)} | KAMA: ${kama.toFixed(4)}`;
   console.log(`\n${message}`);
-  sendTelegramNotification(message, `${symbol}:deviation:${side}`);
+  sendTelegramNotification(message, `${symbol}:deviation:${candle.timestamp}`);
 }
 
 // ─── EMA helpers (classic EMA, used only for the touch alert) ─────────────────
